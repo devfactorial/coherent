@@ -11,20 +11,29 @@ def route_gap_analysis(state: CoherentState) -> str:
 
 def route_spec_approval(state: CoherentState) -> str:
     if state.get("stage_approved", False):
-        return "architecture"
+        return "arch_analyzer"
     # If user rejects the final spec, send back to gap analyzer with feedback
     return "gap_analyzer"
 
-def route_refinement(state: CoherentState) -> str:
-    if state.get("stage_approved"):
-        return "architecture"
-    return "refinement"
 
 
-def route_architecture(state: CoherentState) -> str:
-    if state.get("stage_approved"):
+def route_arch_gap_analysis(state: CoherentState) -> str:
+    complete = state.get("arch_clarification_complete", False)
+    has_q = state.get("arch_current_question") is not None
+    
+    # --- DEBUG PRINT ---
+    print(f"[DEBUG route_arch_gap_analysis] complete={complete}, has_question={has_q}")
+    # -------------------
+    
+    if complete and not has_q:
+        return "adr_writer"
+    return "arch_analyzer"
+
+
+def route_adr_approval(state: CoherentState) -> str:
+    if state.get("stage_approved", False):
         return "planning"
-    return "architecture"
+    return "arch_analyzer"
 
 
 def route_planning(state: CoherentState) -> str:
