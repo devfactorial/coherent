@@ -9,6 +9,7 @@ from coherent.core.schemas.architecture import ArchDiscoveryResponse
 
 async def arch_gap_analyzer_node(state: CoherentState) -> dict:
     llm = get_llm()
+    structured_llm = llm.with_structured_output(ArchDiscoveryResponse)
 
     spec_text = ""
     if state.get("spec_file_path") and Path(state["spec_file_path"]).exists():
@@ -66,22 +67,14 @@ Output ONLY valid JSON matching this schema:
 }}
 """
 
-    response = await llm.ainvoke(
+    parsed: ArchDiscoveryResponse = await structured_llm.ainvoke(
         [
             SystemMessage(
-                content="You are a strict Principal Architect. Ask atomic technical trade-off questions one at a time based on the spec and tech stack. Output valid JSON only."
+                content="You are a strict Principal Architect. Interrogate technical trade-offs one atomic question at a time."
             ),
             HumanMessage(content=prompt),
         ]
     )
-
-    raw_text = extract_text_content(response.content)
-    cleaned_json = raw_text.replace("```json", "").replace("```", "").strip()
-    data = json.loads(cleaned_json)
-    
-    print(f"\n[DEBUG arch_analyzer] LLM raw clarification_complete: {data.get('arch_clarification_complete')}")
-    print(f"[DEBUG arch_analyzer] LLM next_question: {data.get('next_question')}")
-    print(f"[DEBUG arch_analyzer] QnA history length: {len(state.get('arch_qna_history', []))}\n")
 
     arch_qna_history = list(state.get("arch_qna_history", []))
 
@@ -91,15 +84,15 @@ Output ONLY valid JSON matching this schema:
         answered_q["user_answer"] = state["user_feedback"]
         arch_qna_history.append(answered_q)
 
-    next_q = data.get("next_question")
-    clarification_complete = data.get("arch_clarification_complete", False) or (next_q is None)
+    next_q_dict = parsed.next_question.model_dump() if parsed.next_question else None
+    clarification_complete = parsed.arch_clarification_complete or (next_q_dict is None)
 
     return {
         "current_stage": StageEnum.ARCHITECTURE.value,
-        "confirmed_tech_decisions": data.get("confirmed_tech_decisions", []),
-        "active_tech_tradeoffs": data.get("active_tech_tradeoffs", []),
+        "confirmed_tech_decisions": parsed.confirmed_tech_decisions,
+        "active_tech_tradeoffs": parsed.active_tech_tradeoffs,
         "arch_qna_history": arch_qna_history,
-        "arch_current_question": next_q if not clarification_complete else None,
+        "arch_current_question": next_q_dict if not clarification_complete else None,
         "arch_clarification_complete": clarification_complete,
         "user_feedback": None,
         "stage_approved": False,
