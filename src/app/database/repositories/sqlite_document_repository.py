@@ -14,7 +14,7 @@ from app.models.graph.records import (
 
 class SQLiteDocumentRepository(DocumentRepository):
     """
-    SQLite-backed document repository.
+   SQLite-backed document repository.
 
     SQLite stores:
         - logical document metadata
@@ -22,25 +22,29 @@ class SQLiteDocumentRepository(DocumentRepository):
         - document membership
         - rendered record locations
 
-    Actual current document content is stored as files on the
-    filesystem.
+    Actual current document content is stored as Markdown
+    files under document_root.
 
-    Historical document content is represented by DocumentRevision
-    metadata and is handled by the governed history layer rather than
-    being stored in this repository.
+    Historical document content is represented by
+    DocumentRevision metadata and is handled by the governed
+    history layer rather than being stored in this repository.
 
-    Paths are relative to project_root.
+    Document paths are relative to document_root.
     """
 
     def __init__(
         self,
         database_path: str | Path,
-        project_root: str | Path,
+        document_root: str | Path,
     ) -> None:
         self._database_path = Path(database_path)
-        self._project_root = Path(project_root).resolve()
+        self.document_root = Path(document_root).resolve()
 
         self._database_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        self.document_root.mkdir(
             parents=True,
             exist_ok=True,
         )
@@ -770,12 +774,12 @@ class SQLiteDocumentRepository(DocumentRepository):
         path: str,
     ) -> Path:
         candidate = (
-            self._project_root / path
+            self.document_root / path
         ).resolve()
 
         try:
             candidate.relative_to(
-                self._project_root
+                self.document_root
             )
         except ValueError as exc:
             raise ValueError(

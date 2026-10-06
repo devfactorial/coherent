@@ -98,15 +98,22 @@ from app.services.semantic_validator import (
     GraphSemanticValidator,
     ValidationSeverity,
 )
-
+from app.config import Settings
 
 # ============================================================================
 # Demo paths
 # ============================================================================
 
-DEMO_ROOT = Path(".aigov-demo")
-DATABASE_PATH = DEMO_ROOT / "aigov.db"
-DOCUMENT_ROOT = DEMO_ROOT / "documents"
+settings = Settings()
+
+settings.initialize_storage()
+
+print("AIGOV_HOME =", settings.aigov_home)
+print("DATABASE         =", settings.database_path)
+print("DOCUMENT ROOT    =", settings.document_root)
+
+DATABASE_PATH = settings.database_path
+DOCUMENT_ROOT = settings.document_root
 
 
 # ============================================================================
@@ -1346,18 +1353,6 @@ def main() -> None:
     # Reset demo environment
     # ------------------------------------------------------------------
 
-    if DEMO_ROOT.exists():
-        shutil.rmtree(DEMO_ROOT)
-
-    DEMO_ROOT.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    DOCUMENT_ROOT.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
 
     # ------------------------------------------------------------------
     # Repositories
@@ -1369,7 +1364,7 @@ def main() -> None:
 
     document_repository = SQLiteDocumentRepository(
         database_path=DATABASE_PATH,
-        project_root=DEMO_ROOT,
+        document_root=DOCUMENT_ROOT,
     )
 
     # ------------------------------------------------------------------
