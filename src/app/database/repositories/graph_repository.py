@@ -25,12 +25,6 @@ class GraphRepository(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def load_graph(self) -> Graph:
-        """
-        Load the complete graph from persistence.
-        """
-        raise NotImplementedError
 
     @abstractmethod
     def add_node(self, node: GraphNode) -> None:
@@ -86,4 +80,14 @@ class GraphRepository(ABC):
     @abstractmethod
     def clear(self) -> None:
         """Delete all graph data."""
+        raise NotImplementedError
+    
+    @abstractmethod
+    def list_node_revision_ids(self) -> list[str]:
+        """List node revision ids."""
+        raise NotImplementedError
+    
+    @abstractmethod
+    def list_edges(self) -> list[str]:
+        """List edges."""
         raise NotImplementedError

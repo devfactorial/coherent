@@ -109,3 +109,24 @@ class EdgeBasis(StrEnum):
     EXPLICIT = "EXPLICIT"
     DERIVED = "DERIVED"
     INFERRED = "INFERRED"
+    
+class ActorType(StrEnum):
+    USER = "USER"
+    SYSTEM = "SYSTEM"
+    AGENT = "AGENT"
+    LLM = "LLM"
+    TOOL = "TOOL"
+
+
+class ApprovalDecision(StrEnum):
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class GovernanceOperation(StrEnum):
+    CREATE = "CREATE"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+    SUPERSEDE = "SUPERSEDE"

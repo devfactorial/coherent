@@ -3,14 +3,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.database.repositories.record_repository import (
+    RecordRepository,
+)
 from app.governance.record_policy import (
     RecordPolicy,
     RecordPolicyRegistry,
 )
-from app.models.graph.enums import EdgeType
+from app.models.graph.approval import Approval
+from app.models.graph.enums import (
+    ActorType,
+    EdgeType,
+    GovernanceOperation,
+)
+from app.models.graph.node import GraphNode
 from app.models.graph.provenance import (
     ProvenanceMethod,
     ProvenanceSourceType,
+)
+from app.models.graph.provenance_event import (
+    ProvenanceEvent,
 )
 from app.models.graph.records import (
     DocumentLocation,
@@ -18,7 +30,11 @@ from app.models.graph.records import (
     Provenance,
     Record,
 )
+from app.services.approval_service import ApprovalService
 from app.services.graph_service import GraphService
+from app.services.provenance_event_service import (
+    ProvenanceEventService,
+)
 
 
 class DocumentService(Protocol):
@@ -44,17 +60,135 @@ class DocumentService(Protocol):
         anchor: str,
         format: str = "markdown",
         document_revision_id: str | None = None,
-    ) -> tuple[DocumentRevision, DocumentLocation]:
+    ) -> tuple[
+        DocumentRevision,
+        DocumentLocation,
+    ]:
         ...
 
 
 class ProvenanceService(Protocol):
     """
-    Application boundary for creating provenance records.
+    Application boundary for source provenance creation.
 
-    The service creates the Provenance domain record. It does not
-    persist the provenance record into the graph.
+    This represents provenance such as:
+
+        USER_INPUT
+        DOCUMENT
+        FILE
+        LLM
+        TOOL
+        TEST_RUN
+        EXTERNAL_SOURCE
+
+    It is distinct from ProvenanceEvent, which represents
+    aigov-owned governance/audit history.
     """
+
+    def approve(
+        self,
+        *,
+        revision_id: str,
+        actor_id: str,
+        actor_type: ActorType = ActorType.USER,
+        comment: str | None = None,
+    ) -> ApprovalResult:
+        """
+        Approve one specific immutable record revision.
+
+        Approval does not create or mutate a record revision. The exact
+        revision is loaded from the canonical RecordRepository and the
+        resulting Approval is persisted separately. The audit event
+        references that Approval through approval_id.
+        """
+        if self._approval_service is None:
+            raise RuntimeError(
+                "ApprovalService is required for approval operations"
+            )
+
+        if not revision_id:
+            raise ValueError("revision_id cannot be empty")
+
+        self._validate_actor(
+            actor_id=actor_id,
+            actor_type=actor_type,
+        )
+
+        record = self._record_repository.get(revision_id)
+
+        if record is None:
+            raise KeyError(
+                f"Governed record revision not found: {revision_id}"
+            )
+
+        approval = self._approval_service.approve(
+            record=record,
+            actor=actor_id,
+            actor_type=actor_type,
+            comment=comment,
+        )
+
+        provenance_event = self._provenance_event_service.record(
+            record=record,
+            actor=actor_id,
+            actor_type=actor_type,
+            operation=GovernanceOperation.APPROVE,
+            approval_id=approval.approval_id,
+        )
+
+        return ApprovalResult(
+            approval=approval,
+            provenance_event=provenance_event,
+        )
+
+    def reject(
+        self,
+        *,
+        revision_id: str,
+        actor_id: str,
+        actor_type: ActorType = ActorType.USER,
+        comment: str | None = None,
+    ) -> ApprovalResult:
+        """Record a rejection against one specific immutable revision."""
+        if self._approval_service is None:
+            raise RuntimeError(
+                "ApprovalService is required for approval operations"
+            )
+
+        if not revision_id:
+            raise ValueError("revision_id cannot be empty")
+
+        self._validate_actor(
+            actor_id=actor_id,
+            actor_type=actor_type,
+        )
+
+        record = self._record_repository.get(revision_id)
+
+        if record is None:
+            raise KeyError(
+                f"Governed record revision not found: {revision_id}"
+            )
+
+        approval = self._approval_service.reject(
+            record=record,
+            actor=actor_id,
+            actor_type=actor_type,
+            comment=comment,
+        )
+
+        provenance_event = self._provenance_event_service.record(
+            record=record,
+            actor=actor_id,
+            actor_type=actor_type,
+            operation=GovernanceOperation.REJECT,
+            approval_id=approval.approval_id,
+        )
+
+        return ApprovalResult(
+            approval=approval,
+            provenance_event=provenance_event,
+        )
 
     def create(
         self,
@@ -82,9 +216,6 @@ class GovernanceContext:
     artifact_revision_id:
         Identifies the artifact revision containing the record.
 
-        This remains governance context for the record, but is not
-        a property of Document or DocumentRevision.
-
     format:
         Representation format requested for the document projection.
     """
@@ -97,10 +228,10 @@ class GovernanceContext:
 @dataclass(frozen=True, kw_only=True)
 class GovernedRecordResult:
     """
-    Result of creating a governed record.
+    Result of a governed-record operation.
 
-    The result contains every representation created by the
-    governed-record operation.
+    The result contains the canonical record plus every representation
+    produced by the operation.
     """
 
     record: Record
@@ -111,43 +242,62 @@ class GovernedRecordResult:
 
     provenance: Provenance | None
 
+    provenance_event: ProvenanceEvent
+
+
+@dataclass(frozen=True, kw_only=True)
+class ApprovalResult:
+    """Result of an approval decision against one immutable revision."""
+
+    approval: Approval
+    provenance_event: ProvenanceEvent
+
 
 class GovernedRecordService:
     """
-    Orchestrates creation of a governed domain record.
+    Application service responsible for governed-record operations.
 
     A governed record consists of:
 
-        Domain Record
+        Canonical Record
             +
-        Document Representation
+        Document Projection
             +
-        Provenance
+        Source Provenance
             +
-        Graph Representation
+        Graph Projection
+            +
+        Governance Audit Event
 
-    This service coordinates those representations.
+    Persistence ownership:
 
-    Responsibilities:
-        - Resolve the RecordPolicy.
-        - Validate governance requirements.
-        - Create/update the Markdown representation.
-        - Create provenance when required.
-        - Add the record to the graph.
-        - Add provenance to the graph.
-        - Create the mandatory PROVENANCE_OF relationship.
+        RecordRepository
+            -> canonical governed record state
 
-    This service does NOT:
-        - Define graph semantics.
-        - Create arbitrary business relationships.
-        - Render records itself.
-        - Persist Markdown directly.
-        - Persist provenance directly.
-        - Manage workflow approval/rejection.
-        - Implement record-specific business logic.
+        DocumentService
+            -> Markdown/document projection
 
-    Document placement is explicitly supplied to this operation.
-    It is not determined by RecordPolicy.
+        ProvenanceService
+            -> source provenance
+
+        GraphService
+            -> graph projection
+
+        ProvenanceEventService
+            -> immutable governance/audit history
+
+    This service is the orchestration boundary through which governed
+    record mutations enter aigov.
+
+    It does NOT:
+
+        - define graph semantics
+        - create arbitrary business relationships
+        - render records itself
+        - persist Markdown directly
+        - persist source provenance directly
+        - implement approval workflow
+        - implement record-specific business logic
 
     Business relationships such as:
 
@@ -156,20 +306,30 @@ class GovernedRecordService:
         DES-001 --REALIZES--> FR-001
 
     must be created explicitly through GraphService.
+
+    Governance audit events are NOT graph nodes.
     """
 
     def __init__(
         self,
         *,
+        record_repository: RecordRepository,
         graph_service: GraphService,
         document_service: DocumentService,
         provenance_service: ProvenanceService,
+        provenance_event_service: ProvenanceEventService,
         policy_registry: RecordPolicyRegistry,
+        approval_service: ApprovalService | None = None,
     ) -> None:
+        self._record_repository = record_repository
         self._graph_service = graph_service
         self._document_service = document_service
         self._provenance_service = provenance_service
+        self._provenance_event_service = (
+            provenance_event_service
+        )
         self._policy_registry = policy_registry
+        self._approval_service = approval_service
 
     # ------------------------------------------------------------------
     # Public API
@@ -187,28 +347,42 @@ class GovernedRecordService:
         provenance_description: str | None = None,
         source_hash: str | None = None,
         actor_id: str | None = None,
+        actor_type: ActorType = ActorType.USER,
         confidence: float | None = None,
+        operation: GovernanceOperation = GovernanceOperation.CREATE,
+        approval_id: str | None = None,
     ) -> GovernedRecordResult:
         """
-        Create a governed record and all required representations.
+        Create a governed record revision and all required projections.
 
-        The operation is policy-driven.
+        Despite the historical method name `create`, this method can
+        also persist a new immutable revision of an existing logical
+        record.
 
-        The RecordPolicy determines whether the record requires:
-            - a document representation
-            - provenance
-            - graph representation
+        The distinction is expressed through `operation`:
 
-        The document_id determines which logical document receives
-        the record.
+            CREATE
+            UPDATE
+            APPROVE
+            REJECT
+            SUPERSEDE
 
-        GovernanceContext provides execution context such as:
-            - baseline
-            - artifact revision
-            - format
+        The canonical record repository is queried before persistence
+        to determine the previous revision.
+
+        Previous revision information is never obtained from:
+
+            - Markdown
+            - graph state
+            - caller-supplied values
         """
 
         self._validate_record(record)
+
+        self._validate_actor(
+            actor_id=actor_id,
+            actor_type=actor_type,
+        )
 
         policy = self._policy_registry.get(record)
 
@@ -223,12 +397,36 @@ class GovernedRecordService:
             policy=policy,
         )
 
-        document_revision = None
-        document_location = None
+        # --------------------------------------------------------------
+        # Determine previous canonical revision
+        # --------------------------------------------------------------
+
+        previous_record = (
+            self._record_repository.get_latest(
+                record.meta.entity_id
+            )
+        )
+
+        self._validate_operation(
+            record=record,
+            previous_record=previous_record,
+            operation=operation,
+        )
+
+        # --------------------------------------------------------------
+        # Canonical record persistence
+        # --------------------------------------------------------------
+
+        self._record_repository.save(
+            record
+        )
 
         # --------------------------------------------------------------
         # Document representation
         # --------------------------------------------------------------
+
+        document_revision = None
+        document_location = None
 
         if policy.document_required:
 
@@ -238,19 +436,20 @@ class GovernedRecordService:
                     "requires document representation"
                 )
 
-            document_revision, document_location = (
-                self._document_service.upsert_record(
-                    document_id=document_id,
-                    baseline_id=context.baseline_id,
-                    record=record,
-                    section_content=policy.render(record),
-                    anchor=policy.anchor(record),
-                    format=context.format,
-                )
+            (
+                document_revision,
+                document_location,
+            ) = self._document_service.upsert_record(
+                document_id=document_id,
+                baseline_id=context.baseline_id,
+                record=record,
+                section_content=policy.render(record),
+                anchor=policy.anchor(record),
+                format=context.format,
             )
 
         # --------------------------------------------------------------
-        # Provenance
+        # Source provenance
         # --------------------------------------------------------------
 
         provenance = None
@@ -267,6 +466,12 @@ class GovernedRecordService:
                 actor_id=actor_id,
                 confidence=confidence,
             )
+            # Provenance is itself a governed Record.
+            # Persist it through the canonical RecordRepository so that
+            # every graph node has a corresponding governed record.
+            self._record_repository.save(
+                provenance
+            )
 
         # --------------------------------------------------------------
         # Graph representation
@@ -274,11 +479,25 @@ class GovernedRecordService:
 
         if policy.graph_required:
 
-            self._graph_service.add_record(record)
+            record_node = self._graph_node_from_record(
+                record
+            )
+
+            self._graph_service.add_node(
+                record_node
+            )
 
             if provenance is not None:
 
-                self._graph_service.add_record(provenance)
+                provenance_node = (
+                    self._graph_node_from_record(
+                        provenance
+                    )
+                )
+
+                self._graph_service.add_node(
+                    provenance_node
+                )
 
                 self._graph_service.create_edge(
                     edge_id=self._provenance_edge_id(
@@ -294,11 +513,32 @@ class GovernedRecordService:
                     edge_type=EdgeType.PROVENANCE_OF,
                 )
 
+        # --------------------------------------------------------------
+        # Governance audit
+        # --------------------------------------------------------------
+
+        if not actor_id:
+            raise ValueError(
+                "actor_id is required for governance audit"
+            )
+
+        provenance_event = (
+            self._provenance_event_service.record(
+                record=record,
+                actor=actor_id,
+                actor_type=actor_type,
+                operation=operation,
+                previous_record=previous_record,
+                approval_id=approval_id,
+            )
+        )
+
         return GovernedRecordResult(
             record=record,
             document_revision=document_revision,
             document_location=document_location,
             provenance=provenance,
+            provenance_event=provenance_event,
         )
 
     # ------------------------------------------------------------------
@@ -341,6 +581,26 @@ class GovernedRecordService:
         if not record.meta.owner_id:
             raise ValueError(
                 "record owner_id cannot be empty"
+            )
+
+    @staticmethod
+    def _validate_actor(
+        *,
+        actor_id: str | None,
+        actor_type: ActorType,
+    ) -> None:
+        """
+        Validate the actor responsible for the governed operation.
+        """
+
+        if not actor_id:
+            raise ValueError(
+                "actor_id is required for a governed operation"
+            )
+
+        if actor_type is None:
+            raise ValueError(
+                "actor_type is required for a governed operation"
             )
 
     @staticmethod
@@ -402,9 +662,84 @@ class GovernedRecordService:
 
         policy.require_document_configuration()
 
+    @staticmethod
+    def _validate_operation(
+        *,
+        record: Record,
+        previous_record: Record | None,
+        operation: GovernanceOperation,
+    ) -> None:
+        """
+        Validate consistency between the requested operation and
+        canonical record history.
+
+        CREATE:
+            Must not already have a previous revision.
+
+        UPDATE:
+            Must have a previous revision.
+
+        APPROVE / REJECT / SUPERSEDE:
+            Must operate on an existing logical record.
+
+        Note:
+            Approval/rejection workflow semantics will become more
+            sophisticated once the approval model is introduced.
+        """
+
+        if operation is None:
+            raise ValueError(
+                "operation cannot be None"
+            )
+
+        if operation is GovernanceOperation.CREATE:
+            if previous_record is not None:
+                raise ValueError(
+                    "CREATE operation is invalid because a previous "
+                    "revision already exists for record: "
+                    f"{record.meta.entity_id}"
+                )
+
+            return
+
+        if operation is GovernanceOperation.UPDATE:
+            if previous_record is None:
+                raise ValueError(
+                    "UPDATE operation is invalid because no previous "
+                    "revision exists for record: "
+                    f"{record.meta.entity_id}"
+                )
+
+            return
+
+        if operation in {
+            GovernanceOperation.APPROVE,
+            GovernanceOperation.REJECT,
+            GovernanceOperation.SUPERSEDE,
+        }:
+            if previous_record is None:
+                raise ValueError(
+                    f"{operation.value} operation is invalid because "
+                    "no previous revision exists for record: "
+                    f"{record.meta.entity_id}"
+                )
+
     # ------------------------------------------------------------------
-    # Provenance
+    # Graph
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _graph_node_from_record(
+        record: Record,
+    ) -> GraphNode:
+        """
+        Create the graph projection for a governed record revision.
+
+        GraphNode wraps the canonical governed record. The record's
+        revision metadata remains the source of truth for graph identity
+        and metadata.
+        """
+        return GraphNode(record=record)
 
     @staticmethod
     def _provenance_edge_id(

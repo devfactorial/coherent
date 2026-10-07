@@ -50,12 +50,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from app.database.repositories.sqlite_document_repository import (
-    SQLiteDocumentRepository,
-)
-from app.database.repositories.sqlite_graph_repository import (
-    SQLiteGraphRepository,
-)
+from app.bootstrap.application import create_application
 from app.governance.record_policy import (
     RecordPolicy,
     RecordPolicyRegistry,
@@ -98,22 +93,12 @@ from app.services.semantic_validator import (
     GraphSemanticValidator,
     ValidationSeverity,
 )
-from app.config import Settings
+
+from app.database.database import DatabaseContext
 
 # ============================================================================
 # Demo paths
 # ============================================================================
-
-settings = Settings()
-
-settings.initialize_storage()
-
-print("AIGOV_HOME =", settings.aigov_home)
-print("DATABASE         =", settings.database_path)
-print("DOCUMENT ROOT    =", settings.document_root)
-
-DATABASE_PATH = settings.database_path
-DOCUMENT_ROOT = settings.document_root
 
 
 # ============================================================================
@@ -1350,36 +1335,8 @@ def validate_graph(
 def main() -> None:
 
     # ------------------------------------------------------------------
-    # Reset demo environment
+    # Demo-specific components
     # ------------------------------------------------------------------
-
-
-    # ------------------------------------------------------------------
-    # Repositories
-    # ------------------------------------------------------------------
-
-    graph_repository = SQLiteGraphRepository(
-        database_path=DATABASE_PATH,
-    )
-
-    document_repository = SQLiteDocumentRepository(
-        database_path=DATABASE_PATH,
-        document_root=DOCUMENT_ROOT,
-    )
-
-    # ------------------------------------------------------------------
-    # Services
-    # ------------------------------------------------------------------
-
-    graph_service = GraphService(
-        repository=graph_repository,
-    )
-
-    document_service = DocumentService(
-        repository=document_repository,
-    )
-
-    provenance_service = DemoProvenanceService()
 
     renderer = DemoRecordRenderer()
 
@@ -1387,157 +1344,201 @@ def main() -> None:
         renderer=renderer,
     )
 
-    governed_record_service = GovernedRecordService(
-        graph_service=graph_service,
-        document_service=document_service,
-        provenance_service=provenance_service,
+    provenance_service = DemoProvenanceService()
+
+    # ------------------------------------------------------------------
+    # Application bootstrap
+    # ------------------------------------------------------------------
+
+    application = create_application(
         policy_registry=policy_registry,
+        provenance_service=provenance_service,
     )
 
-    # ------------------------------------------------------------------
-    # Explicitly create logical documents
-    # ------------------------------------------------------------------
+    try:
+        settings = application.settings
 
-    create_demo_documents(
-        document_service=document_service,
-    )
-
-    # ------------------------------------------------------------------
-    # Create domain records
-    # ------------------------------------------------------------------
-
-    records = create_demo_records()
-
-    # ------------------------------------------------------------------
-    # Governed creation
-    # ------------------------------------------------------------------
-
-    results = create_governed_records(
-        governed_service=governed_record_service,
-        records=records,
-    )
-
-    print()
-    print("=" * 80)
-    print("GOVERNED RECORD CREATION")
-    print("=" * 80)
-
-    document_placements = (
-        create_document_placements()
-    )
-
-    for name, result in results.items():
-
-        document_id = document_placements[
-            name
-        ]
-
-        document_revision_id = (
-            result.document_revision.id
-            if result.document_revision
-            else "-"
-        )
-
-        provenance_id = (
-            result.provenance.meta.revision_id
-            if result.provenance
-            else "-"
+        print(
+            "AIGOV_HOME      =",
+            settings.aigov_home,
         )
 
         print(
-            f"{name:<24} "
-            f"record={result.record.meta.revision_id:<18} "
-            f"document={document_id:<12} "
-            f"doc-revision={document_revision_id:<30} "
-            f"provenance={provenance_id}"
+            "DATABASE        =",
+            settings.database_path,
         )
 
-    # ------------------------------------------------------------------
-    # Explicit business relationships
-    # ------------------------------------------------------------------
+        print(
+            "DOCUMENT ROOT   =",
+            settings.document_root,
+        )
 
-    create_business_relationships(
-        graph_service=graph_service,
-        records=records,
-    )
+        # --------------------------------------------------------------
+        # Services supplied by the application bootstrap
+        # --------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Save graph
-    # ------------------------------------------------------------------
+        graph_service = application.graph_service
 
-    graph_service.save()
+        document_service = application.document_service
 
-    # ------------------------------------------------------------------
-    # Print in-memory graph
-    # ------------------------------------------------------------------
+        governed_record_service = (
+            application.governed_record_service
+        )
 
-    print_graph(
-        graph_service
-    )
+        graph_repository = application.graph_repository
+        record_repository = application.record_repository
 
-    # ------------------------------------------------------------------
-    # Print documents
-    # ------------------------------------------------------------------
+        # --------------------------------------------------------------
+        # Explicitly create logical documents
+        # --------------------------------------------------------------
 
-    print_documents(
-        document_service=document_service,
-        document_ids=[
-            "FRD-001",
-            "NFRD-001",
-            "HLD-001",
-            "VER-001",
-        ],
-    )
+        create_demo_documents(
+            document_service=document_service,
+        )
 
-    # ------------------------------------------------------------------
-    # Reload graph from SQLite
-    # ------------------------------------------------------------------
+        # --------------------------------------------------------------
+        # Create domain records
+        # --------------------------------------------------------------
 
-    print()
-    print("=" * 80)
-    print("RELOAD FROM SQLITE")
-    print("=" * 80)
+        records = create_demo_records()
 
-    reloaded_graph_service = GraphService(
-        repository=graph_repository,
-    )
+        # --------------------------------------------------------------
+        # Governed creation
+        # --------------------------------------------------------------
 
-    reloaded_graph_service.load()
+        results = create_governed_records(
+            governed_service=governed_record_service,
+            records=records,
+        )
 
-    print(
-        f"Reloaded nodes: "
-        f"{len(reloaded_graph_service.graph.nodes)}"
-    )
+        print()
+        print("=" * 80)
+        print("GOVERNED RECORD CREATION")
+        print("=" * 80)
 
-    print(
-        f"Reloaded edges: "
-        f"{len(reloaded_graph_service.graph.edges)}"
-    )
+        document_placements = (
+            create_document_placements()
+        )
 
-    # ------------------------------------------------------------------
-    # Validate reloaded graph
-    # ------------------------------------------------------------------
+        for name, result in results.items():
 
-    validate_graph(
-        reloaded_graph_service
-    )
+            document_id = document_placements[
+                name
+            ]
 
-    # ------------------------------------------------------------------
-    # Final locations
-    # ------------------------------------------------------------------
+            document_revision_id = (
+                result.document_revision.id
+                if result.document_revision
+                else "-"
+            )
 
-    print()
-    print("=" * 80)
-    print("DEMO OUTPUT")
-    print("=" * 80)
+            provenance_id = (
+                result.provenance.meta.revision_id
+                if result.provenance
+                else "-"
+            )
 
-    print(
-        f"Database : {DATABASE_PATH}"
-    )
+            print(
+                f"{name:<24} "
+                f"record={result.record.meta.revision_id:<18} "
+                f"document={document_id:<12} "
+                f"doc-revision="
+                f"{document_revision_id:<30} "
+                f"provenance={provenance_id}"
+            )
 
-    print(
-        f"Documents: {DOCUMENT_ROOT}"
-    )
+        # --------------------------------------------------------------
+        # Explicit business relationships
+        # --------------------------------------------------------------
+
+        create_business_relationships(
+            graph_service=graph_service,
+            records=records,
+        )
+
+        # --------------------------------------------------------------
+        # Save graph
+        # --------------------------------------------------------------
+
+        graph_service.save()
+
+        # --------------------------------------------------------------
+        # Print in-memory graph
+        # --------------------------------------------------------------
+
+        print_graph(
+            graph_service,
+        )
+
+        # --------------------------------------------------------------
+        # Print documents
+        # --------------------------------------------------------------
+
+        print_documents(
+            document_service=document_service,
+            document_ids=[
+                "FRD-001",
+                "NFRD-001",
+                "HLD-001",
+                "VER-001",
+            ],
+        )
+
+        # --------------------------------------------------------------
+        # Reload graph from SQLite
+        # --------------------------------------------------------------
+
+        print()
+        print("=" * 80)
+        print("RELOAD FROM SQLITE")
+        print("=" * 80)
+
+        reloaded_graph_service = GraphService(
+            repository=graph_repository,
+            record_repository=record_repository
+        )
+
+        reloaded_graph_service.load()
+
+        print(
+            f"Reloaded nodes: "
+            f"{len(reloaded_graph_service.graph.nodes)}"
+        )
+
+        print(
+            f"Reloaded edges: "
+            f"{len(reloaded_graph_service.graph.edges)}"
+        )
+
+        # --------------------------------------------------------------
+        # Validate reloaded graph
+        # --------------------------------------------------------------
+
+        validate_graph(
+            reloaded_graph_service,
+        )
+
+        # --------------------------------------------------------------
+        # Final locations
+        # --------------------------------------------------------------
+
+        print()
+        print("=" * 80)
+        print("DEMO OUTPUT")
+        print("=" * 80)
+
+        print(
+            f"Database : "
+            f"{settings.database_path}"
+        )
+
+        print(
+            f"Documents: "
+            f"{settings.document_root}"
+        )
+
+    finally:
+        application.close()
 
 
 if __name__ == "__main__":

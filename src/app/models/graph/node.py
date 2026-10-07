@@ -16,9 +16,8 @@ class GraphNode:
     The domain record remains the source of truth for the node's
     business data.
     """
-
     record: Record
-
+    
     @property
     def id(self) -> str:
         """
@@ -78,3 +77,9 @@ class GraphNode:
         Return True when two nodes represent the same revision.
         """
         return self.id == other.id
+    
+    @staticmethod
+    def _graph_node_from_record(
+        record: Record,
+    ) -> GraphNode:
+        return GraphNode(record=record)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.database.repositories.graph_repository import GraphRepository
+from app.database.repositories.record_repository import RecordRepository
 from app.models.graph.edge import GraphEdge
 from app.models.graph.enums import (
     EdgeBasis,
@@ -33,9 +34,11 @@ class GraphService:
     def __init__(
         self,
         repository: GraphRepository,
+        record_repository: RecordRepository,
         graph: Graph | None = None,
     ) -> None:
         self._repository = repository
+        self._record_repository = record_repository
         self._graph = graph or Graph()
 
     @property
@@ -50,11 +53,35 @@ class GraphService:
         """
         Load the persisted graph.
 
+        The graph repository provides graph persistence data.
+        The service resolves canonical records and composes the
+        in-memory Graph.
+
         The existing in-memory graph is replaced only after the
-        repository successfully returns a graph.
+        graph has been successfully reconstructed.
         """
 
-        graph = self._repository.load_graph()
+        graph = Graph()
+
+        revision_ids = (
+            self._repository.list_node_revision_ids()
+        )
+
+        for revision_id in revision_ids:
+            record = self._record_repository.get(revision_id)
+
+            if record is None:
+                raise ValueError(
+                    f"Graph node references missing governed record: "
+                    f"{revision_id}"
+                )
+
+            graph.add_node(
+                GraphNode(record=record)
+            )
+
+        for edge in self._repository.list_edges():
+            graph.add_edge(edge)
 
         self._graph = graph
 
@@ -85,15 +112,26 @@ class GraphService:
     # Nodes
     # ------------------------------------------------------------------
 
-    def add_record(
-        self,
-        record: Record,
-    ) -> GraphNode:
-        node = GraphNode(
-            record=record
-        )
+    def load_graph(self) -> Graph:
+        graph = Graph()
 
-        return self.add_node(node)
+        revision_ids = self._repository.list_node_revision_ids()
+
+        for revision_id in revision_ids:
+            record = self._record_repository.get(revision_id)
+
+            if record is None:
+                raise ValueError(
+                    f"Graph node references missing governed record: "
+                    f"{revision_id}"
+                )
+
+            graph.add_node(GraphNode(record=record))
+
+        for edge in self._repository.list_edges():
+            graph.add_edge(edge)
+
+        return graph
 
     def add_node(
         self,

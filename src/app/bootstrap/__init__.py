@@ -1,3 +1,9 @@
-from .settings import Settings
+from app.bootstrap.application import (
+    Application,
+    create_application,
+)
 
-__all__ = ["Settings"]
+__all__ = [
+    "Application",
+    "create_application",
+]
