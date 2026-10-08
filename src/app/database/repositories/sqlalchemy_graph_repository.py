@@ -92,6 +92,10 @@ class SQLAlchemyGraphRepository(GraphRepository):
                 session.add(
                     self._to_node_model(node)
                 )
+                
+            # Nodes must exist in the database before edges referencing
+            # graph_nodes.revision_id are flushed.
+            session.flush()
 
             for edge in graph.edges.values():
                 session.add(

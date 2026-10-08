@@ -50,6 +50,28 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from app.context.pack import ContextPackPurpose, ContextPackService
+from app.models.graph.records import (
+    AcceptanceCriterion,
+    Assessment,
+    Baseline,
+    Constraint,
+    Decision,
+    DesignElement,
+    Evidence,
+    InterfaceContract,
+    Provenance,
+    Requirement,
+    RevisionMeta,
+    TestCase,
+)
+
+from app.models.graph.enums import (
+    ActorType,
+    EdgeType,
+    GovernanceOperation,
+)
+
 from app.bootstrap.application import create_application
 from app.governance.record_policy import (
     RecordPolicy,
@@ -407,7 +429,7 @@ def _revision_meta(
     revision_id: str,
     title: str,
     owner_id: str = "demo-user",
-    status: RevisionStatus = RevisionStatus.DRAFT,
+    status: RevisionStatus = RevisionStatus.APPROVED,
     assertion_kind: AssertionKind = AssertionKind.USER_CONFIRMED,
 ) -> RevisionMeta:
     """
@@ -1328,6 +1350,125 @@ def validate_graph(
 
 
 # ============================================================================
+# Demo baseline
+# ============================================================================
+
+def create_demo_baseline(
+    *,
+    baseline_service,
+    baseline_approval_service,
+    records: dict[str, object],
+) -> Baseline:
+    revision_ids = [
+        record.meta.revision_id
+        for record in records.values()
+    ]
+
+    creation_result = baseline_service.create(
+        baseline_id="BASELINE-001",
+        title="Order processing approved baseline",
+        scope=(
+            "Order processing requirements, constraints, "
+            "design and verification"
+        ),
+        revision_ids=revision_ids,
+        actor="demo-user",
+        actor_type=ActorType.USER,
+    )
+
+    baseline = creation_result.baseline
+
+    baseline_service.request_review(
+        baseline_id=baseline.id,
+        actor="demo-user",
+        actor_type=ActorType.USER,
+    )
+
+    baseline_approval_service.approve(
+        baseline_id=baseline.id,
+        actor="demo-user",
+        actor_type=ActorType.USER,
+        comment="Approved demo baseline.",
+    )
+
+    approved = baseline_service.get(baseline.id)
+
+    if approved is None:
+        raise RuntimeError(
+            f"Approved baseline could not be reloaded: {baseline.id}"
+        )
+
+    return approved
+
+# ============================================================================
+# Context Pack output
+# ============================================================================
+
+
+def print_context_pack(
+    *,
+    pack,
+    renderer: DemoRecordRenderer,
+) -> None:
+    """
+    Print the structured Context Pack and its agent-readable representation.
+    """
+
+    print()
+    print("=" * 80)
+    print("CONTEXT PACK")
+    print("=" * 80)
+
+    print(f"Purpose  : {pack.purpose.value}")
+    print(f"Baseline : {pack.baseline.id}")
+    print(f"Target   : {pack.target.record.meta.entity_id}")
+    print(f"Title    : {pack.target.record.meta.title}")
+
+    print()
+    print("-" * 80)
+    print("SELECTED CONTEXT")
+    print("-" * 80)
+
+    for item in pack.items:
+        record = item.record
+
+        print(
+            f"{record.meta.entity_id:<12} "
+            f"{type(record).__name__:<24} "
+            f"{item.basis}"
+        )
+
+        if item.related_via:
+            print(
+                f"    via: {', '.join(item.related_via)}"
+            )
+
+    print()
+    print("-" * 80)
+    print("RELATIONSHIPS")
+    print("-" * 80)
+
+    for relationship in pack.relationships:
+        print(
+            f"{relationship.source_revision_id}"
+            f" --[{relationship.edge_type.value}]--> "
+            f"{relationship.target_revision_id}"
+        )
+
+    print()
+    print("-" * 80)
+    print("AGENT-READABLE CONTEXT")
+    print("-" * 80)
+
+    for item in pack.items:
+        record = item.record
+
+        print()
+        print(renderer.render(record))
+
+    print()
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -1387,6 +1528,7 @@ def main() -> None:
 
         graph_repository = application.graph_repository
         record_repository = application.record_repository
+        baseline_repository = application.baseline_repository
 
         # --------------------------------------------------------------
         # Explicitly create logical documents
@@ -1409,6 +1551,25 @@ def main() -> None:
         results = create_governed_records(
             governed_service=governed_record_service,
             records=records,
+        )
+        
+        # Create the approved baseline consumed by ContextPackService.
+        baseline = create_demo_baseline(
+            baseline_service=application.baseline_service,
+            baseline_approval_service=application.baseline_approval_service,
+            records=records,
+        )
+
+        print()
+        print("=" * 80)
+        print("APPROVED BASELINE")
+        print("=" * 80)
+        print(f"Baseline : {baseline.id}")
+        print(f"Title    : {baseline.title}")
+        print(f"Status   : {baseline.status.value}")
+        print(
+            f"Members  : "
+            f"{len(baseline_repository.list_revision_ids(baseline.id))}"
         )
 
         print()
@@ -1460,6 +1621,19 @@ def main() -> None:
         # Save graph
         # --------------------------------------------------------------
 
+        print()
+        print("GRAPH NODE IDS BEFORE SAVE:")
+        for revision_id in sorted(graph_service.graph.nodes):
+            print("  ", revision_id)
+
+        print()
+        print("GRAPH EDGE ENDPOINTS BEFORE SAVE:")
+        for edge in graph_service.graph.edges.values():
+            print(
+                f"  {edge.id}: "
+                f"{edge.source_revision_id} -> "
+                f"{edge.target_revision_id}"
+            )
         graph_service.save()
 
         # --------------------------------------------------------------
@@ -1535,6 +1709,37 @@ def main() -> None:
         print(
             f"Documents: "
             f"{settings.document_root}"
+        )
+        
+        
+        # ============================================================================
+        # Context Packs
+        # ============================================================================
+
+        context_pack_service = ContextPackService(
+            baseline_repository=baseline_repository,
+            record_repository=record_repository,
+            graph_repository=graph_repository,
+        )
+
+        implementation_pack = context_pack_service.build(
+            target_id="FR-001",
+            purpose=ContextPackPurpose.IMPLEMENTATION,
+        )
+
+        verification_pack = context_pack_service.build(
+            target_id="FR-001",
+            purpose=ContextPackPurpose.VERIFICATION,
+        )
+
+        print_context_pack(
+            pack=implementation_pack,
+            renderer=renderer,
+        )
+
+        print_context_pack(
+            pack=verification_pack,
+            renderer=renderer,
         )
 
     finally:

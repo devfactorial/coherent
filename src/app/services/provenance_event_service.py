@@ -9,6 +9,7 @@ from app.database.repositories.provenance_event_repository import (
 from app.models.graph.enums import (
     ActorType,
     GovernanceOperation,
+    GovernanceSubjectType,
 )
 from app.models.graph.provenance_event import ProvenanceEvent
 from app.models.graph.records import Record
@@ -56,7 +57,8 @@ class ProvenanceEventService:
             actor_type=actor_type,
             operation=operation,
             timestamp=datetime.now(timezone.utc),
-            record_id=record.meta.entity_id,
+            subject_type=GovernanceSubjectType.RECORD_REVISION,
+            subject_id=record.meta.entity_id,
             revision_id=record.meta.revision_id,
             record_version=record.meta.version,
             previous_revision_id=previous_revision_id,

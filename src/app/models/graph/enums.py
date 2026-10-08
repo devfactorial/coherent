@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class StrEnum(str, Enum):
     pass
 
@@ -109,7 +110,8 @@ class EdgeBasis(StrEnum):
     EXPLICIT = "EXPLICIT"
     DERIVED = "DERIVED"
     INFERRED = "INFERRED"
-    
+
+
 class ActorType(StrEnum):
     USER = "USER"
     SYSTEM = "SYSTEM"
@@ -123,6 +125,13 @@ class ApprovalDecision(StrEnum):
     REJECTED = "REJECTED"
 
 
+class GovernanceSubjectType(StrEnum):
+    """Type of object against which a governance decision/event applies."""
+
+    RECORD_REVISION = "RECORD_REVISION"
+    BASELINE = "BASELINE"
+
+
 class GovernanceOperation(StrEnum):
     CREATE = "CREATE"
     UPDATE = "UPDATE"
@@ -130,3 +139,7 @@ class GovernanceOperation(StrEnum):
     APPROVE = "APPROVE"
     REJECT = "REJECT"
     SUPERSEDE = "SUPERSEDE"
+    BASELINE_CREATED = "BASELINE_CREATED"
+    BASELINE_REVIEW_REQUESTED = "BASELINE_REVIEW_REQUESTED"
+    BASELINE_APPROVED = "BASELINE_APPROVED"
+    BASELINE_SUPERSEDED = "BASELINE_SUPERSEDED"

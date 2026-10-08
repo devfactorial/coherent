@@ -16,21 +16,27 @@ class ApprovalModel(Base):
         primary_key=True,
     )
 
-    record_id: Mapped[str] = mapped_column(
+    subject_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    subject_id: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
         index=True,
     )
 
-    revision_id: Mapped[str] = mapped_column(
+    revision_id: Mapped[str | None] = mapped_column(
         String(255),
-        nullable=False,
+        nullable=True,
         index=True,
     )
 
-    record_version: Mapped[str] = mapped_column(
+    record_version: Mapped[str | None] = mapped_column(
         String(100),
-        nullable=False,
+        nullable=True,
     )
 
     decision: Mapped[str] = mapped_column(
@@ -62,6 +68,12 @@ class ApprovalModel(Base):
         Index(
             "ix_approvals_revision_timestamp",
             "revision_id",
+            "timestamp",
+        ),
+        Index(
+            "ix_approvals_subject_timestamp",
+            "subject_type",
+            "subject_id",
             "timestamp",
         ),
     )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from app.config import Settings
 
@@ -21,7 +20,12 @@ from app.database.repositories.sqlalchemy_document_repository import (
     SQLAlchemyDocumentRepository,
 )
 
-
+from app.database.repositories.sqlalchemy_baseline_repository import (
+    SQLAlchemyBaselineRepository,
+)
+from app.database.repositories.sqlalchemy_baseline_governance_repository import (
+    SQLAlchemyBaselineGovernanceRepository,
+)
 
 from app.database.sqlalchemy.session import Database
 
@@ -38,6 +42,9 @@ from app.services.graph_service import GraphService
 from app.services.provenance_event_service import (
     ProvenanceEventService,
 )
+from app.services.baseline_service import BaselineService
+from app.services.baseline_approval_service import BaselineApprovalService
+
 
 
 @dataclass
@@ -76,12 +83,16 @@ class Application:
 
     graph_repository: SQLAlchemyGraphRepository
     document_repository: SQLAlchemyDocumentRepository
+    baseline_repository: SQLAlchemyBaselineRepository
+    baseline_governance_repository: SQLAlchemyBaselineGovernanceRepository
 
     graph_service: GraphService
     document_service: DocumentService
     approval_service: ApprovalService
     provenance_event_service: ProvenanceEventService
     governed_record_service: GovernedRecordService
+    baseline_service: BaselineService
+    baseline_approval_service: BaselineApprovalService
 
     def close(self) -> None:
         """
@@ -163,6 +174,13 @@ def create_application(
     graph_repository = SQLAlchemyGraphRepository(
         session_factory=database.session_factory,
     )
+    baseline_repository = SQLAlchemyBaselineRepository(
+        session_factory=database.session_factory,
+    )
+
+    baseline_governance_repository = SQLAlchemyBaselineGovernanceRepository(
+        session_factory=database.session_factory,
+    )
 
     # ================================================================
     # Projection / infrastructure services
@@ -189,6 +207,16 @@ def create_application(
         repository=approval_repository,
     )
 
+    baseline_service = BaselineService(
+        baseline_repository=baseline_repository,
+        governance_repository=baseline_governance_repository,
+    )
+
+    baseline_approval_service = BaselineApprovalService(
+        baseline_repository=baseline_repository,
+        governance_repository=baseline_governance_repository,
+    )
+
     governed_record_service = GovernedRecordService(
         record_repository=record_repository,
         graph_service=graph_service,
@@ -211,6 +239,8 @@ def create_application(
 
         graph_repository=graph_repository,
         document_repository=document_repository,
+        baseline_repository=baseline_repository,
+        baseline_governance_repository=baseline_governance_repository,
 
         graph_service=graph_service,
         document_service=document_service,
@@ -221,4 +251,6 @@ def create_application(
         governed_record_service=(
             governed_record_service
         ),
+        baseline_service=baseline_service,
+        baseline_approval_service=baseline_approval_service,
     )

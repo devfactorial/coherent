@@ -5,7 +5,11 @@ from uuid import uuid4
 
 from app.database.repositories.approval_repository import ApprovalRepository
 from app.models.graph.approval import Approval
-from app.models.graph.enums import ActorType, ApprovalDecision
+from app.models.graph.enums import (
+    ActorType,
+    ApprovalDecision,
+    GovernanceSubjectType,
+)
 from app.models.graph.records import Record
 
 
@@ -69,7 +73,8 @@ class ApprovalService:
 
         approval = Approval(
             approval_id=f"APR-{uuid4().hex}",
-            record_id=record.meta.entity_id,
+            subject_type=GovernanceSubjectType.RECORD_REVISION,
+            subject_id=record.meta.entity_id,
             revision_id=record.meta.revision_id,
             record_version=record.meta.version,
             decision=decision,

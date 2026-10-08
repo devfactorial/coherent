@@ -222,8 +222,11 @@ Record = (
 @dataclass(frozen=True, kw_only=True)
 class Baseline:
     """
-    A named, version-independent snapshot or approved state of a set
-    of governance artifacts.
+    Immutable logical snapshot of governed specification revisions.
+
+    A baseline identifies the exact set of governed revisions that were
+    approved together and can therefore be used as an authoritative
+    specification boundary for downstream consumers such as Context Packs.
     """
 
     id: str

@@ -6,65 +6,81 @@ from datetime import datetime
 from app.models.graph.enums import (
     ActorType,
     GovernanceOperation,
+    GovernanceSubjectType,
 )
 
 
 @dataclass(frozen=True, kw_only=True)
 class ProvenanceEvent:
     """
-    Immutable audit event describing a governed record operation.
+    Immutable product-owned governance audit event.
 
-    This is distinct from Provenance.
-
-    Provenance answers:
-        "Where did this information come from?"
-
-    ProvenanceEvent answers:
-        "Who performed this governance operation,
-         on which record revision, and what payload was recorded?"
+    The event may apply to a governed record revision or to a higher-level
+    governance aggregate such as a baseline.
     """
 
     event_id: str
-
     actor: str
     actor_type: ActorType
     operation: GovernanceOperation
     timestamp: datetime
 
-    record_id: str
-    revision_id: str
-    record_version: str
+    subject_type: GovernanceSubjectType
+    subject_id: str
+
+    revision_id: str | None
+    record_version: str | None
     previous_revision_id: str | None
     previous_version: str | None
 
     payload_hash: str
-
     approval_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id.strip():
             raise ValueError("event_id cannot be empty")
-
         if not self.actor.strip():
             raise ValueError("actor cannot be empty")
+        if not self.subject_id.strip():
+            raise ValueError("subject_id cannot be empty")
+        if not self.payload_hash.strip():
+            raise ValueError("payload_hash cannot be empty")
 
-        if not self.record_id.strip():
-            raise ValueError("record_id cannot be empty")
+        if self.subject_type is GovernanceSubjectType.RECORD_REVISION:
+            if not self.revision_id or not self.revision_id.strip():
+                raise ValueError(
+                    "Record revision events require revision_id"
+                )
+            if not self.record_version or not self.record_version.strip():
+                raise ValueError(
+                    "Record revision events require record_version"
+                )
+        elif self.subject_type is GovernanceSubjectType.BASELINE:
+            if self.revision_id is not None:
+                raise ValueError(
+                    "Baseline events must not carry revision_id"
+                )
+            if self.record_version is not None:
+                raise ValueError(
+                    "Baseline events must not carry record_version"
+                )
 
-        if not self.revision_id.strip():
-            raise ValueError("revision_id cannot be empty")
-
-        if not self.record_version.strip():
-            raise ValueError("record_version cannot be empty")
-
-        if self.previous_revision_id is None and self.previous_version is not None:
+        if (
+            self.previous_revision_id is None
+            and self.previous_version is not None
+        ):
             raise ValueError(
                 "previous_version cannot be set when previous_revision_id is None"
             )
-        if self.previous_version is None and self.previous_revision_id is not None:
+        if (
+            self.previous_version is None
+            and self.previous_revision_id is not None
+        ):
             raise ValueError(
                 "previous_revision_id cannot be set when previous_version is None"
             )
 
-        if not self.payload_hash.strip():
-            raise ValueError("payload_hash cannot be empty")
+    @property
+    def record_id(self) -> str:
+        """Backward-compatible alias for record-oriented callers."""
+        return self.subject_id
