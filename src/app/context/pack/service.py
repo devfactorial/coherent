@@ -4,6 +4,10 @@ from dataclasses import dataclass
 
 from app.context.pack.enums import ContextPackPurpose, ContextSelectionBasis
 from app.context.pack.models import ContextPack, ContextPackItem
+from app.context.pack.relevance import (
+    NFRRelevanceAnalyzer,
+    OpenAICompatibleNFRRelevanceAnalyzer,
+)
 from app.database.repositories.baseline_repository import BaselineRepository
 from app.database.repositories.graph_repository import GraphRepository
 from app.database.repositories.record_repository import RecordRepository
@@ -14,8 +18,9 @@ from app.models.graph.records import (
     Constraint,
     DesignElement,
     Record,
+    Requirement,
 )
-
+import os
 
 @dataclass(frozen=True)
 class _Selected:
@@ -33,10 +38,14 @@ class ContextPackService:
         baseline_repository: BaselineRepository,
         record_repository: RecordRepository,
         graph_repository: GraphRepository,
+        nfr_relevance_analyzer: NFRRelevanceAnalyzer | None = None,
     ) -> None:
         self._baseline_repository = baseline_repository
         self._record_repository = record_repository
         self._graph_repository = graph_repository
+        self._nfr_relevance_analyzer = (
+            nfr_relevance_analyzer or OpenAICompatibleNFRRelevanceAnalyzer()
+        )
 
     def build(
         self,
@@ -79,6 +88,14 @@ class ContextPackService:
             selected=selected,
             relationships=relationships,
             purpose=purpose,
+        )
+
+        self._select_semantically_relevant_nfrs(
+            target=target,
+            baseline_revision_ids=baseline_revision_ids,
+            records=records,
+            selected=selected,
+            relationships=relationships,
         )
 
         if purpose is ContextPackPurpose.VERIFICATION:
@@ -314,6 +331,95 @@ class ContextPackService:
                 related_via=(edge.edge_type.value,),
             )
             relationships[edge.id] = edge
+
+   
+    def _select_semantically_relevant_nfrs(
+        self,
+        *,
+        target: Record,
+        baseline_revision_ids: set[str],
+        records: dict[str, Record],
+        selected: dict[str, _Selected],
+        relationships: dict[str, GraphEdge],
+    ) -> None:
+        """Select relevant NFRs using the optional LLM, including them by default."""
+        if (
+            not isinstance(target, Requirement)
+            or target.meta.entity_id.upper().startswith("NFR-")
+        ):
+            return
+
+        llm_enabled = (
+            os.getenv("AIGOV_LLM_NFR_RELEVANCE_ENABLED", "false")
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"}
+        )
+
+        context = tuple(item.record for item in selected.values())
+        candidates = sorted(
+            (
+                record
+                for record in records.values()
+                if isinstance(record, Requirement)
+                and record.meta.entity_id.upper().startswith("NFR-")
+                and record.meta.revision_id != target.meta.revision_id
+                and record.meta.revision_id not in selected
+            ),
+            key=lambda record: record.meta.entity_id,
+        )
+
+        for nfr in candidates:
+            if llm_enabled:
+                assessment = self._nfr_relevance_analyzer.assess(
+                    target=target,
+                    context=context,
+                    nfr=nfr,
+                )
+                if assessment.decision == "NOT_RELEVANT":
+                    continue
+
+                decision = assessment.decision
+                rationale = assessment.rationale
+            else:
+                decision = "DEFAULT_INCLUDED"
+                rationale = (
+                    "LLM relevance analysis disabled; "
+                    "NFR included by default."
+                )
+
+            self._add_selected(
+                selected=selected,
+                record=nfr,
+                basis=ContextSelectionBasis.SEMANTIC_RELEVANCE,
+                related_via=(
+                    f"NFR_{decision}",
+                    rationale,
+                ),
+            )
+
+            # Include constraints that explicitly constrain this NFR.
+            # Edge direction: constraint -> NFR.
+            for edge in self._connected_edges(nfr.meta.revision_id):
+                if not edge.is_active() or edge.edge_type is not EdgeType.CONSTRAINS:
+                    continue
+                if edge.target_revision_id != nfr.meta.revision_id:
+                    continue
+                if edge.source_revision_id not in baseline_revision_ids:
+                    continue
+
+                constraint = records[edge.source_revision_id]
+                self._add_selected(
+                    selected=selected,
+                    record=constraint,
+                    basis=ContextSelectionBasis.SEMANTIC_RELEVANCE,
+                    related_via=(
+                        "CONSTRAINS",
+                        f"APPLIES_TO_{nfr.meta.entity_id}",
+                    ),
+                )
+                relationships[edge.id] = edge
+
 
     def _select_implementation_context(
         self,

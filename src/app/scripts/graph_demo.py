@@ -1266,6 +1266,135 @@ def print_documents(
         print(content.rstrip())
 
 
+def verify_baseline_immutability_after_new_revision(
+    *,
+    governed_record_service: GovernedRecordService,
+    baseline_repository,
+    records: dict[str, object],
+    baseline_id: str,
+) -> None:
+    """Create FR-001-v2 and verify the approved baseline remains frozen."""
+
+    original_fr = records["fr"]
+
+    # Build a new immutable revision of the same logical requirement.
+    fr_v2_meta = RevisionMeta(
+        entity_id=original_fr.meta.entity_id,
+        revision_id="FR-001-v2",
+        version="2",
+        title=original_fr.meta.title,
+        status=RevisionStatus.DRAFT,
+        owner_id=original_fr.meta.owner_id,
+        assertion_kind=original_fr.meta.assertion_kind,
+    )
+
+    fr_v2 = Requirement(
+        meta=fr_v2_meta,
+        statement=(
+            "The system shall process valid customer orders "
+            "and return a unique order identifier."
+        ),
+        priority=original_fr.priority,
+    )
+
+    # This creates a new revision; it must not modify the approved baseline.
+    governed_record_service.create(
+        record=fr_v2,
+        context=GovernanceContext(
+            baseline_id=baseline_id,
+            artifact_revision_id="FRD-001-v1",
+        ),
+        document_id="FRD-001",
+        source_type=ProvenanceSourceType.USER_INPUT,
+        source_id="baseline-immutability-verification",
+        provenance_method=ProvenanceMethod.DIRECT_INPUT,
+        provenance_description=(
+            "Verification-only creation of FR-001-v2"
+        ),
+        actor_id="demo-user",
+        actor_type=ActorType.USER,
+        confidence=1.0,
+        operation=GovernanceOperation.UPDATE,
+    )
+
+    # Re-read membership after creating v2.
+    persisted_revision_ids = set(
+        baseline_repository.list_revision_ids(baseline_id)
+    )
+
+    print()
+    print("=" * 80)
+    print("BASELINE IMMUTABILITY VERIFICATION")
+    print("=" * 80)
+    print("Created revision: FR-001-v2")
+    print(f"Baseline: {baseline_id}")
+    print(f"Baseline member count after creation: {len(persisted_revision_ids)}")
+
+    assert "FR-001-v1" in persisted_revision_ids, (
+        "FAIL: FR-001-v1 disappeared from the approved baseline."
+    )
+    assert "FR-001-v2" not in persisted_revision_ids, (
+        "FAIL: FR-001-v2 was incorrectly added to the approved baseline."
+    )
+    assert len(persisted_revision_ids) == 11, (
+        "FAIL: Baseline membership count changed after creating FR-001-v2."
+    )
+
+    print("PASS: FR-001-v1 remains in BASELINE-001.")
+    print("PASS: FR-001-v2 is not in BASELINE-001.")
+    print("PASS: BASELINE-001 still contains exactly 11 revisions.")
+
+def verify_baseline_membership(
+    *,
+    baseline_id: str,
+    baseline_repository,
+    records: dict[str, object],
+) -> set[str]:
+    """Verify persisted baseline membership against the intended revisions."""
+
+    expected_revision_ids = {
+        record.meta.revision_id
+        for record in records.values()
+    }
+
+    # Read from the repository so this verifies persisted membership.
+    persisted_revision_ids = set(
+        baseline_repository.list_revision_ids(baseline_id)
+    )
+
+    print()
+    print("=" * 80)
+    print("BASELINE REVISION MEMBERSHIP VERIFICATION")
+    print("=" * 80)
+    print(f"Baseline: {baseline_id}")
+    print(f"Expected members: {len(expected_revision_ids)}")
+    print(f"Persisted members: {len(persisted_revision_ids)}")
+
+    print("\nPersisted revision IDs:")
+    for revision_id in sorted(persisted_revision_ids):
+        print(f"  - {revision_id}")
+
+    missing = expected_revision_ids - persisted_revision_ids
+    unexpected = persisted_revision_ids - expected_revision_ids
+
+    if missing or unexpected:
+        print("\nFAIL: Baseline membership does not match.")
+        if missing:
+            print(f"Missing revisions: {sorted(missing)}")
+        if unexpected:
+            print(f"Unexpected revisions: {sorted(unexpected)}")
+        raise AssertionError("Baseline revision membership mismatch")
+
+    if len(persisted_revision_ids) != 11:
+        raise AssertionError(
+            f"Expected exactly 11 baseline members, "
+            f"found {len(persisted_revision_ids)}"
+        )
+
+    print("\nPASS: The baseline contains exactly the intended 11 revisions.")
+    return persisted_revision_ids
+
+
 # ============================================================================
 # Validation
 # ============================================================================
@@ -1571,6 +1700,13 @@ def main() -> None:
             f"Members  : "
             f"{len(baseline_repository.list_revision_ids(baseline.id))}"
         )
+        
+        baseline_revision_ids = verify_baseline_membership(
+            baseline_id=baseline.id,
+            baseline_repository=baseline_repository,
+            records=records,
+        )
+        
 
         print()
         print("=" * 80)
@@ -1740,6 +1876,13 @@ def main() -> None:
         print_context_pack(
             pack=verification_pack,
             renderer=renderer,
+        )
+        
+        verify_baseline_immutability_after_new_revision(
+            governed_record_service=governed_record_service,
+            baseline_repository=baseline_repository,
+            records=records,
+            baseline_id=baseline.id,
         )
 
     finally:
