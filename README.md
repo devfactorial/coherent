@@ -2,7 +2,7 @@
 
 **An open-source collection of AI skills for building an AI-driven Software Development Lifecycle (SDLC).**
 
-AI-SDLC aims to bring structure, consistency, and governance to AI-assisted software development through a collection of reusable, specialized skills.
+Coherent aims to bring structure, consistency, and governance to AI-assisted software development through a collection of reusable, specialized skills.
 
 The goal is to move beyond ad hoc AI prompting towards a structured development lifecycle in which AI agents assist with requirements discovery, analysis, design, implementation, and verification.
 
@@ -12,7 +12,7 @@ Traditional software development follows a structured lifecycle, with well-defin
 
 As AI coding agents become increasingly capable, there is an opportunity to apply the same discipline to AI-assisted software development.
 
-AI-SDLC explores this approach by providing specialized skills that guide AI agents through individual SDLC activities.
+Coherent explores this approach by providing specialized skills that guide AI agents through individual SDLC activities.
 
 The broader vision is to establish a workflow where:
 
@@ -47,7 +47,7 @@ The following capabilities represent the broader direction of the project and ar
 ## Repository Structure
 
 ```text
-ai-sdlc/
+coherent/
 ├── skills/
 │   └── refine-requirements/
 │       └── SKILL.md
@@ -117,7 +117,7 @@ The intention is to build this as an evolving, reusable foundation for structure
 
 **Early Development / Experimental**
 
-The repository is evolving. Skills and workflows may change as the overall AI-SDLC approach develops.
+The repository is evolving. Skills and workflows may change as the overall Coherent approach develops.
 
 ## License
 
