@@ -1,4 +1,4 @@
-# AI-SDLC
+# Coherent
 
 **An open-source collection of AI skills for building an AI-driven Software Development Lifecycle (SDLC).**
 
